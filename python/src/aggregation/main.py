@@ -28,6 +28,20 @@ class AggregationFilter:
         self.fruit_top = {}
         self.eof_count = {}
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def close(self):
+        try:
+            self.input_queue.close()
+            self.output_queue.close()
+        except Exception as e:
+            logging.error(f"Error closing connections: {e}")
+
     def _process_data(self, client_id, fruit, amount):
         logging.info("Processing data message")
         top = self.fruit_top.setdefault(client_id, [])
