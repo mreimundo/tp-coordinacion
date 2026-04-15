@@ -75,7 +75,7 @@ class AggregationFilter:
             )
         )
 
-    def process_messsage(self, message, ack, nack):
+    def process_message(self, message, ack, nack):
         logging.info("Process message")
         msg = message_protocol.internal.deserialize(message)
 
