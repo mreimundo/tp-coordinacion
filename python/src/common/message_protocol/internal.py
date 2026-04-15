@@ -17,7 +17,7 @@ def make_data(client_id, fruit, amount):
             "fruit": fruit, "amount": amount}
 
 
-def make_eof(client_id, remaining):
+def make_eof(client_id, remaining=None):
     return {"type": MSG_EOF, "client_id": client_id, "remaining": remaining}
 
 
@@ -33,5 +33,5 @@ def serialize_data(client_id, fruit, amount):
     return serialize(make_data(client_id, fruit, amount))
 
 
-def serialize_eof(client_id, remaining):
+def serialize_eof(client_id, remaining=None):
     return serialize(make_eof(client_id, remaining))
