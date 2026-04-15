@@ -1,18 +1,21 @@
+import uuid
 from common import message_protocol
 
 
 class MessageHandler:
 
     def __init__(self):
+        # generamos id cliente con optimismo de que no van a haber colisiones
+        self.client_id = str(uuid.uuid4())
         pass
 
-    def serialize_data_message(self, message, client_id):
+    def serialize_data_message(self, message):
         [fruit, amount] = message
-        return message_protocol.internal.serialize_data(client_id, fruit, amount)
+        return message_protocol.internal.serialize_data(self.client_id, fruit, amount)
 
-    def serialize_eof_message(self, message, client_id, sum_amount):
+    def serialize_eof_message(self, message):
         return message_protocol.internal.serialize_eof(
-            client_id, remaining=sum_amount - 1
+            self.client_id
         )
 
     def deserialize_result_message(self, message):
