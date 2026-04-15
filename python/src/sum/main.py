@@ -1,7 +1,6 @@
 import os
 import logging
 import signal
-import hashlib
 
 from common import middleware, message_protocol, fruit_item
 
@@ -10,7 +9,6 @@ MOM_HOST = os.environ["MOM_HOST"]
 INPUT_QUEUE = os.environ["INPUT_QUEUE"]
 SUM_AMOUNT = int(os.environ["SUM_AMOUNT"])
 SUM_PREFIX = os.environ["SUM_PREFIX"]
-SUM_CONTROL_EXCHANGE = "SUM_CONTROL_EXCHANGE"
 AGGREGATION_AMOUNT = int(os.environ["AGGREGATION_AMOUNT"])
 AGGREGATION_PREFIX = os.environ["AGGREGATION_PREFIX"]
 
@@ -22,9 +20,10 @@ class SumFilter:
         self.input_queue = middleware.MessageMiddlewareQueueRabbitMQ(
             MOM_HOST, INPUT_QUEUE
         )
-        self.aggregation_exchanges = [
-            middleware.MessageMiddlewareExchangeRabbitMQ(
-                MOM_HOST, AGGREGATION_PREFIX, [f"{AGGREGATION_PREFIX}_{i}"]
+        # una queue de salida por aggregator (index determinado por hash).
+        self.aggregation_queues = [
+            middleware.MessageMiddlewareQueueRabbitMQ(
+                MOM_HOST, f"{AGGREGATION_PREFIX}_{i}"
             )
             for i in range(AGGREGATION_AMOUNT)
         ]
@@ -38,16 +37,15 @@ class SumFilter:
         return False
 
     def close(self):
-        self.input_queue.close()
-        for exchange in self.aggregation_exchanges:
-            exchange.close()
-
-    @staticmethod
-    def _stable_hash(fruit):
-        return int(hashlib.md5(fruit.encode()).hexdigest(), 16)
+        try:
+            self.input_queue.close()
+            for q in self.aggregation_queues:
+                q.close()
+        except Exception as e:
+            logging.error(f"Error closing connections: {e}")
 
     def _aggregator_idx(self, fruit):
-        return self._stable_hash(fruit) % AGGREGATION_AMOUNT
+        return hash(fruit) % AGGREGATION_AMOUNT
 
     def _process_data(self, client_id, fruit, amount):
         logging.info(f"Process data")
@@ -59,6 +57,9 @@ class SumFilter:
 
     def _process_eof(self, client_id, remaining):
         logging.info(f"Broadcasting data messages")
+        if remaining is None:
+            remaining = SUM_AMOUNT - 1
+
         if remaining > 0:
             logging.info(f"[client={client_id}] Propagating EOF (remaining={remaining - 1})")
             self.input_queue.send(
@@ -66,38 +67,31 @@ class SumFilter:
             )
 
         client_state = self.amount_by_fruit.pop(client_id, {})
-        logging.info(f"[client={client_id}] Flushing {len(client_state)} fruits to aggregators")
+        logging.info(f"[client={client_id}] Flushing {len(client_state)} fruits")
         for fi in client_state.values():
             idx = self._aggregator_idx(fi.fruit)
-            self.aggregation_exchanges[idx].send(
+            self.aggregation_queues[idx].send(
                 message_protocol.internal.serialize_data(client_id, fi.fruit, fi.amount)
             )
 
-        logging.info(f"[client={client_id}] Sending EOF to all {AGGREGATION_AMOUNT} aggregators")
-        for exchange in self.aggregation_exchanges:
-            exchange.send(
-                message_protocol.internal.serialize_eof(client_id, remaining=0)
-            )
+        logging.info(f"[client={client_id}] Sending EOF to {AGGREGATION_AMOUNT} aggregators")
+        for q in self.aggregation_queues:
+            q.send(message_protocol.internal.serialize_eof(client_id, remaining=0))
 
     def process_message(self, message, ack, nack):
-        msg = message_protocol.internal.deserialize(message)
+        try:
+            msg = message_protocol.internal.deserialize(message)
+            if message_protocol.internal.is_data(msg):
+                self._process_data(msg["client_id"], msg["fruit"], msg["amount"])
+            elif message_protocol.internal.is_eof(msg):
+                self._process_eof(msg["client_id"], msg.get("remaining"))
+            else:
+                logging.warning(f"Unknown message type: {msg.get('type')}")
 
-        if message_protocol.internal.is_data(msg):
-            self._process_data(msg["client_id"], msg["fruit"], msg["amount"])
-        elif message_protocol.internal.is_eof(msg):
-            self._process_eof(msg["client_id"], msg["remaining"])
-        else:
-            logging.warning(f"Unknown message type: {msg.get('type')}")
-
-        ack()
-
-    def process_data_messsage(self, message, ack, nack):
-        fields = message_protocol.internal.deserialize(message)
-        if len(fields) == 2:
-            self._process_data(*fields)
-        else:
-            self._process_eof(*fields)
-        ack()
+            ack()
+        except Exception as e:
+            logging.error(f"Error processing message: {e}")
+            nack()
 
     def _handle_sigterm(self, signum, frame):
         logging.info("Received SIGTERM, stopping consumer")
