@@ -69,7 +69,7 @@ class JoinFilter:
             )
         )
 
-    def process_messsage(self, message, ack, nack):
+    def process_message(self, message, ack, nack):
         logging.info("Received top")
         try:
             msg = message_protocol.internal.deserialize(message)
