@@ -1,7 +1,6 @@
 import os
 import signal
 import logging
-import bisect
 
 from common import middleware, message_protocol, fruit_item
 
@@ -18,6 +17,7 @@ TOP_SIZE = int(os.environ["TOP_SIZE"])
 class AggregationFilter:
 
     def __init__(self):
+        self._shutting_down = False
         self.input_queue = middleware.MessageMiddlewareQueueRabbitMQ(
             MOM_HOST, f"{AGGREGATION_PREFIX}_{ID}"
         )
@@ -25,8 +25,8 @@ class AggregationFilter:
             MOM_HOST, OUTPUT_QUEUE
         )
         # lo paso a diccionario para que sea por client_id
-        self.fruit_top = {}
-        self.eof_count = {}
+        self.fruit_items = {}  # client_id → {fruit → FruitItem}
+        self.eof_count = {}  # client_id → int
 
     def __enter__(self):
         return self
@@ -44,12 +44,11 @@ class AggregationFilter:
 
     def _process_data(self, client_id, fruit, amount):
         logging.info("Processing data message")
-        top = self.fruit_top.setdefault(client_id, [])
-        for i, fi in enumerate(top):
-            if fi.fruit == fruit:
-                top[i] = fi + fruit_item.FruitItem(fruit, amount)
-                return
-        bisect.insort(top, fruit_item.FruitItem(fruit, amount))
+        client_state = self.fruit_items.setdefault(client_id, {})
+        client_state[fruit] = (
+            client_state.get(fruit, fruit_item.FruitItem(fruit, 0))
+            + fruit_item.FruitItem(fruit, int(amount))
+        )
 
     def _process_eof(self, client_id):
         logging.info("Received EOF")
@@ -60,13 +59,13 @@ class AggregationFilter:
         if count < SUM_AMOUNT:
             return
 
-        # todos los Sum terminaron para este cliente: calculo un top parcial.
-        top = self.fruit_top.pop(client_id, [])
+        items = list(self.fruit_items.pop(client_id, {}).values())
         del self.eof_count[client_id]
 
+        items.sort(reverse=True)
         partial = [
             (fi.fruit, fi.amount)
-            for fi in reversed(top[-TOP_SIZE:])
+            for fi in items[:TOP_SIZE]
         ]
         logging.info(f"[client={client_id}] Sending partial top ({len(partial)} items) to Join")
         self.output_queue.send(
