@@ -1,6 +1,7 @@
 import os
 import logging
 import signal
+import zlib
 
 from common import middleware, message_protocol, fruit_item
 
@@ -54,6 +55,8 @@ class SumFilter:
     def close(self):
         try:
             self.input_queue.close()
+            for q in self.peer_eof_queues:
+                q.close()
             for q in self.aggregation_queues:
                 q.close()
         except Exception as e:

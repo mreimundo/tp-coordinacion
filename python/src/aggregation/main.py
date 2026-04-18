@@ -25,8 +25,8 @@ class AggregationFilter:
             MOM_HOST, OUTPUT_QUEUE
         )
         # lo paso a diccionario para que sea por client_id
-        self.fruit_items = {}  # client_id → {fruit → FruitItem}
-        self.eof_count = {}  # client_id → int
+        self.fruit_items = {}  # client_id -> {fruit -> FruitItem}
+        self.eof_count = {}  # client_id -> int
 
     def __enter__(self):
         return self
