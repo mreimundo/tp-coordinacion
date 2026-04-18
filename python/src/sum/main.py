@@ -63,7 +63,7 @@ class SumFilter:
             logging.error(f"Error closing connections: {e}")
 
     def _aggregator_idx(self, fruit):
-        return hash(fruit) % AGGREGATION_AMOUNT
+        return zlib.crc32(fruit.encode()) % AGGREGATION_AMOUNT
 
     def _process_data(self, client_id, fruit, amount):
         logging.info(f"Process data")
