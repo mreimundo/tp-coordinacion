@@ -227,17 +227,14 @@ Todos los datos intermedios se mantienen en memoria RAM (diccionarios Python ind
 El protocolo interno (`common/message_protocol/internal.py`) reemplaza el formato de lista del skeleton (`[fruta, cantidad]` / `[]`) por mensajes JSON con tipo `MsgType` explícito y `client_id`:
 
 ```json
-// data
-{"type": "data", "client_id": "uuid", "fruit": "manzana", "amount": 5}
+{"type": "data", "client_id": "uuid", "fruit": "manzana", "amount": 5} // data
 
-// EOF generado por el gateway (remaining null: Sum lo inicializa)
-{"type": "eof",  "client_id": "uuid", "remaining": null}
+{"type": "eof",  "client_id": "uuid", "remaining": null} // EOF generado por el gateway (remaining null: Sum lo inicializa)
 
-// EOF del broadcast inter-Sum
-{"type": "eof",  "client_id": "uuid", "remaining": 0}
 
-// resultado: Aggregation -> Join -> gateway
-{"client_id": "uuid", "fruit_top": [["manzana", 42], ["pera", 38]]}
+{"type": "eof",  "client_id": "uuid", "remaining": 0} // EOF del broadcast entre Sums
+
+{"client_id": "uuid", "fruit_top": [["manzana", 42], ["pera", 38]]}// resultado: Aggregation -> Join -> gateway
 ```
 
 Los tipos de mensaje del protocolo interno son:
