@@ -196,6 +196,31 @@ El sistema soporta cualquier combinación de `SUM_AMOUNT × AGGREGATION_AMOUNT` 
 Todos los datos intermedios se mantienen en memoria RAM (diccionarios Python indexados por `client_id`). El footprint crece linealmente con la cantidad de frutas únicas × clientes activos simultáneamente. Como indicó el equipo docente, persistir los acumulados a disco sería una mejora natural para volúmenes grandes, pero está fuera del alcance de este TP.
 
 ---
+### Trade-offs del diseño adoptado
+
+#### Routing y coordinación
+
+| Decisión | Alternativa descartada | Motivo de la elección |
+|---|---|---|
+| Routing fruta→Aggregator por `zlib.crc32` | `hash()` built-in de Python | `PYTHONHASHSEED` es aleatorio por proceso; dos instancias de Sum hashearían la misma fruta a Aggregators distintos. `zlib.crc32` es determinístico entre contenedores sin configuración adicional |
+| Routing por fruta (consistent hash) | Sticky routing por `client_id` | El routing por cliente concentra toda la carga de un cliente en un único Aggregator: con K réplicas y un solo cliente activo, K-1 Aggregators están ociosos. El routing por fruta distribuye la carga independientemente de la cantidad de clientes |
+| Queue directa por Aggregator (`{AGGREGATION_PREFIX}_{i}`) | Exchange con routing keys | Las queues directas son más simples y el destino es único y determinado por hash. El exchange agrega una indirección innecesaria cuando no hay fan-out |
+
+#### Coordinación de EOF
+
+| Decisión | Alternativa descartada | Motivo de la elección |
+|---|---|---|
+| Cola dedicada por Sum (`{SUM_PREFIX}_{i}_eof`) para recibir el broadcast | Propagación decremental por la working queue (`remaining`) | Con la working queue compartida, la misma instancia puede consumir todos los EOFs que ella misma republicó, especialmente si es más rápida que sus pares. Las colas dedicadas garantizan entrega uno a uno sin competencia: cada cola tiene exactamente un consumidor |
+| Multiplexado en un único channel (`add_queue_consumer`) | Thread separado para consumir la cola de EOF | Un thread adicional introduce contención sobre el estado compartido del nodo (`amount_by_fruit`) y requiere locks. El multiplexado en el mismo channel de pika es secuencial por diseño: los callbacks de `input_queue` y de `sum_i_eof` nunca se ejecutan simultáneamente, eliminando la necesidad de sincronización |
+
+#### Modelo de ejecución
+
+| Decisión | Alternativa descartada | Motivo de la elección |
+|---|---|---|
+| Multiprocessing vía Docker (un proceso por nodo) | Python `threading` dentro de un proceso | El GIL de Python impide la ejecución paralela de threads para código CPU-bound. Cada contenedor tiene su propio intérprete y heap, por lo que no hay GIL compartido. Además, el aislamiento de procesos hace que un crash en un nodo no afecte a los demás, y la comunicación exclusivamente por mensajes (RabbitMQ) elimina la necesidad de locks o memoria compartida |
+| Acumulación en memoria RAM (`dict` por `client_id`) | Persistencia a disco entre mensajes | Para el volumen de datos del TP (datasets de algunos miles de filas, pocas frutas únicas) el footprint en RAM es trivial. Persistir a disco agregaría latencia de I/O por cada mensaje procesado y complejidad de manejo de archivos sin beneficio observable. El equipo docente confirmó que no es requerido para este trabajo |
+
+
 ### Otros cambios registrados (apéndices)
 #### Apéndice A — Protocolo interno
 
@@ -211,11 +236,19 @@ El protocolo interno (`common/message_protocol/internal.py`) reemplaza el format
 // EOF del broadcast inter-Sum
 {"type": "eof",  "client_id": "uuid", "remaining": 0}
 
-// resultado: Aggregation -> Join -> Gateway
+// resultado: Aggregation -> Join -> gateway
 {"client_id": "uuid", "fruit_top": [["manzana", 42], ["pera", 38]]}
 ```
 
-El campo `remaining` fue la primera aproximación para coordinar el EOF entre Sums (propagación decremental por la working queue). Fue reemplazado por el mecanismo de broadcast via colas dedicadas descrito en la sección anterior, que resuelve el race condition donde una sola instancia podía acaparar todos los EOFs.
+Los tipos de mensaje del protocolo interno son:
+ 
+| `type`   | Campos adicionales                        | Generado por         | Consumido por              |
+|----------|-------------------------------------------|----------------------|----------------------------|
+| `"data"` | `client_id`, `fruit`, `amount`            | Gateway / Sum        | Sum / Aggregation          |
+| `"eof"`  | `client_id`, `remaining` (`null` o `0`)   | Gateway / Sum        | Sum (working queue y eof queue) / Aggregation |
+| —        | `client_id`, `fruit_top`                  | Aggregation          | Join / Gateway             |
+ 
+El campo `remaining` fue la primera aproximación para coordinar el EOF entre Sums (propagación decremental por la working queue). Fue reemplazado por el mecanismo de broadcast via colas dedicadas descrito en la sección anterior, que resuelve el race condition donde una sola instancia podía acaparar todos los EOFs. El campo se preservó en el protocolo con valor `null` (EOF original del gateway) y `0` (EOF del broadcast), ya que distinguir ambos casos resultó útil durante el debugging.
 
 #### Apéndice B — Middleware
 
