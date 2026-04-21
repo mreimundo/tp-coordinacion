@@ -84,7 +84,7 @@ Redactar un breve informe explicando el modo en que se coordinan las instancias 
 ## Informe de resolución
 
 ### Introducción
-**Nota**: La implementación de este proyecto se realizó en Python, por lo que todos los cambios se incluyen sobre la carpeta `/python`
+**Nota**: La implementación de este proyecto se realizó en Python, por lo que todos los cambios se incluyeron sobre la carpeta `/python`
 
 Como vimos en el enunciado, el sistema implementa un pipeline de conteo y ranking de stock de clientes que podrían ser una verdulería. Múltiples clientes envían pares `(fruta, cantidad)` al sistema, este los procesa y devuelve un top-N de las frutas con mayor cantidad total acumulada (o según el criterio que se defina en el archivo del `FruitItem`). Según la figura 1 tenemos entonces un esquema similar a
 
@@ -105,11 +105,11 @@ Uno de los puntos más fundamentales del trabajo radica en la lógica de coordin
 
 #### Sum
 
-Cada instancia de Sum consume de la **working queue** `input_queue` compartida. El middleware (el que ha sido implementado en el TP previo usando RabbitMQ) reparte los mensajes en round-robin entre todas las instancias activas. Cada instancia acumula en memoria un diccionario `{client_id → {fruta → FruitItem}}` con las sumas parciales de los datos que recibió.
+Cada instancia de Sum consume de la **working queue** `input_queue` compartida. El middleware (el que ha sido implementado en el TP previo usando RabbitMQ) reparte los mensajes en round-robin entre todas las instancias activas. Cada instancia acumula en memoria un diccionario `{client_id -> {fruta -> FruitItem}}` con las sumas parciales de los datos que recibió.
 
 #### Aggregation
 
-Cada instancia de Aggregation tiene una **cola dedicada** `{AGGREGATION_PREFIX}_{ID}`. Aquí se acumulan los datos que recibe en un diccionario `{client_id → {fruta → FruitItem}}` y lleva un contador de EOFs recibidos por cliente. Cuando el contador alcanza `SUM_AMOUNT`, significa que todos los Sum terminaron para ese cliente, y se procede a ordenar el diccionario y emitir el top parcial hacia Join.
+Cada instancia de Aggregation tiene una **cola dedicada** `{AGGREGATION_PREFIX}_{ID}`. Aquí se acumulan los datos que recibe en un diccionario `{client_id -> {fruta -> FruitItem}}` y lleva un contador de EOFs recibidos por cliente. Cuando el contador alcanza `SUM_AMOUNT`, significa que todos los Sum terminaron para ese cliente, y se procede a ordenar el diccionario y emitir el top parcial hacia Join.
 
 #### Routing Sum -> Aggregation
 
@@ -131,7 +131,7 @@ sum_2: manzana=200  ------------------------> aggr_1
 
 #### Coordinación de EOF entre instancias de Sum
 
-Una vez resuelto el routing de datos, surge el problema de **cuándo y cómo cada instancia de Sum sabe que terminó la ingesta de un cliente (EOF)**. El gateway inyecta un único EOF por cliente a la working queue, y el middleware lo entrega a una sola instancia. Las demás tienen datos acumulados para ese cliente que nunca enviarían si no se las notifica.
+Una vez resuelto el ruteo de datos, surge el problema de **cuándo y cómo cada instancia de Sum sabe que terminó la ingesta de un cliente (EOF)**. El gateway inyecta un único EOF por cliente a la working queue, y el middleware lo entrega a una sola instancia. Las demás tienen datos acumulados para ese cliente que nunca enviarían si no se las notifica.
 
 Una primera aproximación fue propagar el EOF por la misma working queue, de forma decremental, o sea la instancia que lo recibe lo republica con un contador `remaining` decrementado, de manera que cada Sum eventualmente consuma un EOF. El problema de este approach era que la misma instancia puede consumir todos los EOFs republicados que la misma publicó, especialmente si la queue está casi vacía o si una instancia es más rápida que las otras. En la práctica ocurría que el sistema pasaba los escenarios 1 y 2 (un solo Sum) pero fallaba en el 3 en adelante, ya que una sola instancia acaparaba todos los EOFs y las demás nunca hacían flush. Los resultados eran aproximadamente 1/3 de lo esperado.
 
@@ -139,7 +139,7 @@ La solución adoptada fue un **broadcast peer-to-peer via colas dedicadas de EOF
 
 1. La instancia que recibe el EOF original publica una copia en `{SUM_PREFIX}_{i}_eof` para cada `i ∈ [0, SUM_AMOUNT)`.
 2. Cada instancia consume únicamente su propia cola `{SUM_PREFIX}_{ID}_eof`, garantizando la entrega uno a uno sin competencia.
-3. Al recibir la notificación, cada instancia hace flush de sus acumulados hacia los Aggregators (por consistent hash) y envía un EOF a cada uno. Esta idea se puede evidenciar en el esquema
+3. Al recibir la notificación, cada instancia hace flush de sus acumulados hacia los Aggregators y envía un EOF a cada uno. Esta idea se puede evidenciar en el esquema
 
 ```
 Gateway --> [input_queue] --> Sum_k (recibe EOF original)
@@ -156,7 +156,7 @@ Gateway --> [input_queue] --> Sum_k (recibe EOF original)
                         cada Sum envía EOF a cada Aggregator
 ```
 
-Las colas de EOF se consumen en el **mismo channel** que `input_queue` mediante `add_queue_consumer` (ver Apéndice B), por lo que `pika` las multiplexa en un único `start_consuming()` sin necesitar threads adicionales dentro del proceso. Esto preserva el procesamiento secuencial de mensajes y race conditions entre los nodos. El flush de un cliente solo ocurre después de que todos sus datos ya fueron procesados, ya que el EOF de la cola dedicada fue publicado luego de que el EOF de la working queue fue consumido y recibido 'ack'.
+Las colas de EOF se consumen en el **mismo channel** que `input_queue` mediante `add_queue_consumer` (ver Apéndice B), por lo que `pika` las multiplexa en un único `start_consuming()` sin necesitar threads adicionales dentro del proceso. Esto preserva el procesamiento secuencial de mensajes y evita las race conditions entre los nodos. El flush de un cliente solo ocurre después de que todos sus datos ya fueron procesados, ya que el EOF de la cola dedicada fue publicado luego de que el EOF de la working queue fue consumido y recibido 'ack'.
 
 #### Coordinación de EOF en Aggregation -> Join
 
@@ -181,19 +181,19 @@ Se consideró también un enfoque -mencionado de manera similar en el foro por u
 Aumentar `SUM_AMOUNT` en el docker-compose agrega réplicas que compiten por la working queue. El sistema adapta su coordinación automáticamente, ya que se implementó de la siguiente manera:
 - El broadcast de EOF crea exactamente `SUM_AMOUNT` colas de notificación.
 - Cada Aggregator espera `SUM_AMOUNT` EOFs antes de emitir su top parcial.
-- El consistent hash garantiza que el routing fruta→Aggregator es correcto independientemente de cuántos Sum existan.
+- El consistent hash garantiza que el routing fruta->Aggregator es correcto independientemente de cuántos Sum existan.
 
 #### Respecto a la cantidad de nodos Aggregation
 
 Aumentar `AGGREGATION_AMOUNT` redistribuye el espacio de frutas entre más Aggregators. El consistent hash asegura que cada fruta siempre va al mismo Aggregator, incluso con más nodos: Sum crea tantas queues de salida como Aggregators haya (leído de `AGGREGATION_AMOUNT`), y Join espera `AGGREGATION_AMOUNT` tops parciales antes de emitir el resultado final.
 
-Durante el desarrollo se intentó usar el `hash()` built-in de Python para el consistent hash. Esto funcionaba correctamente en escenarios con un solo Aggregator (`hash(f) % 1 = 0` siempre), pero fallaba con múltiples Aggregators porque Python asigna una semilla aleatoria distinta por proceso (`PYTHONHASHSEED`): la misma fruta daba índices distintos en `sum_0`, `sum_1` y `sum_2`, rompiendo el invariante del consistent hash. Los síntomas en el make test eran totales incorrectos y resultados mezclados entre frutas. Se reemplazó por `zlib.crc32`, que es determinístico, no criptográfico, y forma parte de la biblioteca estándar.
+Como dijimos previamente, durante el desarrollo se intentó usar el `hash()` built-in de Python para el consistent hash. Esto funcionaba correctamente en escenarios con un solo Aggregator (`hash(f) % 1 = 0` siempre), pero fallaba con múltiples Aggregators porque Python asigna una semilla aleatoria distinta por proceso (`PYTHONHASHSEED`): la misma fruta daba índices distintos en `sum_0`, `sum_1` y `sum_2`, rompiendo el invariante del consistent hash. Los síntomas en el make test eran totales incorrectos y resultados mezclados entre frutas. Se reemplazó por `zlib.crc32`, que es determinístico, no criptográfico, y forma parte de la biblioteca estándar.
 
 El sistema soporta cualquier combinación de `SUM_AMOUNT × AGGREGATION_AMOUNT` sin cambios de código, solo ajustando el docker-compose.
 
 #### Almacenamiento en memoria
 
-Todos los datos intermedios se mantienen en memoria RAM (diccionarios Python indexados por `client_id`). El footprint crece linealmente con la cantidad de frutas únicas × clientes activos simultáneamente. Como indicó el equipo docente, persistir los acumulados a disco sería una mejora natural para volúmenes grandes, pero está fuera del alcance de este TP.
+Todos los datos intermedios se mantienen en memoria RAM (diccionarios Python indexados por `client_id`). El footprint crece linealmente con la cantidad de frutas únicas × clientes activos simultáneamente. Como indicó el equipo docente via foro y clase, persistir los acumulados a disco sería una mejora natural si se escalan volúmenes más grandes, pero está fuera del alcance de este TP y no se encontró necesario. Además en memoria se lee y escribe más rápido.
 
 ---
 ### Trade-offs del diseño adoptado
@@ -202,9 +202,9 @@ Todos los datos intermedios se mantienen en memoria RAM (diccionarios Python ind
 
 | Decisión | Alternativa descartada | Motivo de la elección |
 |---|---|---|
-| Routing fruta→Aggregator por `zlib.crc32` | `hash()` built-in de Python | `PYTHONHASHSEED` es aleatorio por proceso; dos instancias de Sum hashearían la misma fruta a Aggregators distintos. `zlib.crc32` es determinístico entre contenedores sin configuración adicional |
+| Routing fruta->Aggregator por `zlib.crc32` | `hash()` built-in de Python | `PYTHONHASHSEED` es aleatorio por proceso; dos instancias de Sum hashearían la misma fruta a Aggregators distintos. `zlib.crc32` es determinístico entre contenedores sin configuración adicional |
 | Routing por fruta (consistent hash) | Sticky routing por `client_id` | El routing por cliente concentra toda la carga de un cliente en un único Aggregator: con K réplicas y un solo cliente activo, K-1 Aggregators están ociosos. El routing por fruta distribuye la carga independientemente de la cantidad de clientes |
-| Queue directa por Aggregator (`{AGGREGATION_PREFIX}_{i}`) | Exchange con routing keys | Las queues directas son más simples y el destino es único y determinado por hash. El exchange agrega una indirección innecesaria cuando no hay fan-out |
+| Queue directa por Aggregator (`{AGGREGATION_PREFIX}_{i}`) | Exchange con routing keys | Las queues directas son más simples y el destino es único y determinado por hash. El exchange agrega una indirección innecesaria cuando no hay fanout |
 
 #### Coordinación de EOF
 
@@ -217,8 +217,8 @@ Todos los datos intermedios se mantienen en memoria RAM (diccionarios Python ind
 
 | Decisión | Alternativa descartada | Motivo de la elección |
 |---|---|---|
-| Multiprocessing vía Docker (un proceso por nodo) | Python `threading` dentro de un proceso | El GIL de Python impide la ejecución paralela de threads para código CPU-bound. Cada contenedor tiene su propio intérprete y heap, por lo que no hay GIL compartido. Además, el aislamiento de procesos hace que un crash en un nodo no afecte a los demás, y la comunicación exclusivamente por mensajes (RabbitMQ) elimina la necesidad de locks o memoria compartida |
-| Acumulación en memoria RAM (`dict` por `client_id`) | Persistencia a disco entre mensajes | Para el volumen de datos del TP (datasets de algunos miles de filas, pocas frutas únicas) el footprint en RAM es trivial. Persistir a disco agregaría latencia de I/O por cada mensaje procesado y complejidad de manejo de archivos sin beneficio observable. El equipo docente confirmó que no es requerido para este trabajo |
+| Multiprocessing vía Docker (un proceso por nodo) | `threading` dentro de un proceso | El GIL de Python impide la ejecución paralela de threads para código CPU-bound. Cada contenedor tiene su propio intérprete y heap, por lo que no hay GIL compartido. Además, el aislamiento de procesos hace que un crasheo en un nodo no afecte a los demás, y la comunicación exclusivamente por mensajes elimina la necesidad de locks o memoria compartida |
+| Acumulación en memoria (`dict` por `client_id`) | Persistencia a disco entre mensajes | Para el volumen de datos del TP (datasets de algunos miles de filas, pocas frutas únicas) el footprint en RAM es trivial. Persistir a disco agregaría latencia de I/O por cada mensaje procesado y complejidad de manejo de archivos sin beneficio observable. El equipo docente confirmó que no es requerido para este trabajo |
 
 
 ### Otros cambios registrados (apéndices)
