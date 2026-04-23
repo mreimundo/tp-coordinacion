@@ -22,7 +22,7 @@ class SumFilter:
             MOM_HOST, INPUT_QUEUE
         )
         # cola dedicada para recibir los EOFs de broadcast de otros Sum
-        # registro en el mismo channel que input para que start_consuming() los multiplexe sin threads. 
+        # registro en el mismo channel que input para que start_consuming() los multiplexe sin threads.
         self._eof_queue_name = f"{SUM_PREFIX}_{ID}_eof"
         self.input_queue.add_queue_consumer(
             self._eof_queue_name, self.process_eof_notification
